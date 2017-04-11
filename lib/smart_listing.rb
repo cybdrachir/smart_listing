@@ -20,6 +20,153 @@ module Kaminari
 end
 
 module SmartListing
+
+  class PaginatableCollection
+    include Enumerable
+    include Kaminari::ConfigurationMethods::ClassMethods
+
+    ENTRY = 'entry'.freeze
+
+    attr_internal_accessor :limit_value, :offset_value
+
+    # ==== Options
+    # * <tt>:limit</tt> - limit
+    # * <tt>:offset</tt> - offset
+    # * <tt>:total_count</tt> - total_count
+    # * <tt>:padding</tt> - padding
+    def initialize(original_collection = [], limit: nil, offset: nil, total_count: nil, padding: nil)
+      @_collection, @_limit_value, @_offset_value, @_total_count, @_padding = original_collection, (limit || default_per_page).to_i, offset.to_i, total_count, padding.to_i
+
+
+      # if limit && offset
+      #   extend Kaminari::PageScopeMethods
+      # end
+
+      # if @_total_count && (@_total_count <= original_collection.count)
+      #   # original_collection = original_collection.first(@_total_count)[@_offset_value, @_limit_value]
+      #   @_collection = @_collection.limit(@_total_count).offset(@_offset_value).limit(@_limit_value)
+      # end
+
+      unless @_total_count
+        @_total_count = @_collection.count
+        # original_collection = original_collection[@_offset_value, @_limit_value]
+        # @_original_collection = @_original_collection.offset(@_offset_value).limit(@_limit_value)
+      end
+
+      # super(original_collection || ::Kaminari.paginate_array([]))
+    end
+
+    # Used for page_entry_info
+    def entry_name(options = {})
+      I18n.t('helpers.page_entries_info.entry', options.reverse_merge(default: ENTRY.pluralize(options[:count])))
+    end
+
+    # items at the specified "page"
+    # class_eval <<-RUBY, __FILE__, __LINE__ + 1
+    # def #{Kaminari.config.page_method_name}(num = 1)
+    def page(num = 1)
+      per_page = max_per_page && (default_per_page > max_per_page) ? max_per_page : default_per_page
+      limit(per_page).offset(per_page * ((num = num.to_i - 1) < 0 ? 0 : num))
+    end
+
+    def per(num, max_per_page: nil)
+      max_per_page ||= ((defined?(@_max_per_page) && @_max_per_page) || self.max_per_page)
+      @_per = (num || default_per_page).to_i
+      if (n = num.to_i) < 0 || !(/^\d/ =~ num.to_s)
+        self
+      elsif n.zero?
+        limit(n)
+      elsif max_per_page && (max_per_page < n)
+        limit(max_per_page).offset(offset_value / limit_value * max_per_page)
+      else
+        limit(n).offset(offset_value / limit_value * n)
+      end
+    end
+
+    # returns another chunk of the original collection
+    def limit(num)
+      self.class.new @_collection, limit: num, offset: @_offset_value, total_count: @_total_count, padding: @_padding
+    end
+
+    # returns another chunk of the original collection
+    def offset(num)
+      self.class.new @_collection, limit: @_limit_value, offset: num, total_count: @_total_count, padding: @_padding
+    end
+
+    def padding(num)
+      num = num.to_i
+      raise ArgumentError, "padding must not be negative" if num < 0
+      @_padding = num
+      offset(@_offset_value + @_padding)
+    end
+
+    # total item numbers of the original collection
+    def total_count
+      @_total_count || @_collection.count
+    end
+
+    def total_pages
+      count_without_padding = total_count
+      count_without_padding -= @_padding if defined?(@_padding) && @_padding
+      count_without_padding = 0 if count_without_padding < 0
+
+      total_pages_count = (count_without_padding.to_f / @_limit_value).ceil
+      max_pages && (max_pages < total_pages_count) ? max_pages : total_pages_count
+    rescue FloatDomainError
+      raise ZeroPerPageOperation, "The number of total pages was incalculable. Perhaps you called .per(0)?"
+    end
+
+    # Current page number
+    def current_page
+      offset_without_padding = @_offset_value
+      offset_without_padding -= @_padding if defined?(@_padding) && @_padding
+      offset_without_padding = 0 if offset_without_padding < 0
+
+      (offset_without_padding / @_limit_value) + 1
+    rescue ZeroDivisionError
+      raise ZeroPerPageOperation, "Current page was incalculable. Perhaps you called .per(0)?"
+    end
+
+    # Next page number in the collection
+    def next_page
+      current_page + 1 unless last_page? || out_of_range?
+    end
+
+    # Previous page number in the collection
+    def prev_page
+      current_page - 1 unless first_page? || out_of_range?
+    end
+
+    # First page of the collection?
+    def first_page?
+      current_page == 1
+    end
+
+    # Last page of the collection?
+    def last_page?
+      current_page == total_pages
+    end
+
+    # Out of range of the collection?
+    def out_of_range?
+      current_page > total_pages
+    end
+
+    def each(&block)
+      @_collection.limit(@_limit_value).offset(@_offset_value).each(&block)
+    end
+  end
+
+  # Wrap an ActiveRecord::Relation object to make it paginatable
+  # ==== Options
+  # * <tt>:limit</tt> - limit
+  # * <tt>:offset</tt> - offset
+  # * <tt>:total_count</tt> - total_count
+  # * <tt>:padding</tt> - padding
+  def self.paginate_collection(collection, limit: nil, offset: nil, total_count: nil, padding: nil)
+    PaginatableCollection.new collection, limit: limit, offset: offset, total_count: total_count, padding: padding
+  end
+
   class Base
     attr_reader :name, :collection, :options, :per_page, :sort, :page, :partial, :count
 
@@ -29,12 +176,12 @@ module SmartListing
       config_profile = options.delete(:config_profile)
 
       @options = {
-        :partial                        => @name,                       # SmartListing partial name
-        :sort_attributes                => :implicit,                   # allow implicitly setting sort attributes
-        :default_sort                   => {},                          # default sorting
-        :href                           => nil,                         # set SmartListing target url (in case when different than current url)
-        :remote                         => true,                        # SmartListing is remote by default
-        :callback_href                  => nil,                         # set SmartListing callback url (in case when different than current url)
+          :partial => @name, # SmartListing partial name
+          :sort_attributes => :implicit, # allow implicitly setting sort attributes
+          :default_sort => {}, # default sorting
+          :href => nil, # set SmartListing target url (in case when different than current url)
+          :remote => true, # SmartListing is remote by default
+          :callback_href => nil, # set SmartListing callback url (in case when different than current url)
       }.merge(SmartListing.config(config_profile).global_options).merge(options)
 
       if @options[:array]
@@ -52,7 +199,7 @@ module SmartListing
       @per_page = page_sizes.first unless page_sizes.include?(@per_page) || (unlimited_per_page? && @per_page == 0)
 
       @sort = parse_sort(get_param(:sort)) || @options[:default_sort]
-      sort_keys = (@options[:sort_attributes] == :implicit ? @sort.keys.collect{|s| [s, s]} : @options[:sort_attributes])
+      sort_keys = (@options[:sort_attributes] == :implicit ? @sort.keys.collect { |s| [s, s] } : @options[:sort_attributes])
 
       set_param(:per_page, @per_page, cookies) if @options[:memorize_per_page]
 
@@ -69,7 +216,7 @@ module SmartListing
 
       if @options[:array]
         if @sort && @sort.any? # when array we sort only by first attribute
-          i = sort_keys.index{|x| x[0] == @sort.first[0]}
+          i = sort_keys.index { |x| x[0] == @sort.first[0] }
           @collection = @collection.sort do |x, y|
             xval = x
             yval = y
@@ -100,8 +247,8 @@ module SmartListing
       else
         # let's sort by all attributes
         #
-        @collection = @collection.order(sort_keys.collect{|s| "#{s[1]} #{@sort[s[0]]}" if @sort[s[0]]}.compact) if @sort && @sort.any?
-
+        @collection = @collection.order(sort_keys.collect { |s| "#{s[1]} #{@sort[s[0]]}" if @sort[s[0]] }.compact) if @sort && @sort.any?
+        @collection = SmartListing.paginate_collection(@collection)
         if @options[:paginate] && @per_page > 0
           @collection = @collection.page(@page).per(@per_page)
         end
