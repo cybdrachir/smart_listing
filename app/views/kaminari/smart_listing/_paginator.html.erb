@@ -7,19 +7,38 @@
     paginator:     the paginator that renders the pagination tags inside
 -%>
 <%= paginator.render do -%>
-  <div class="<%= smart_listing_config.classes(:pagination_wrapper) %>">
-    <ul class="<%= smart_listing_config.classes(:pagination_container) %>">
-      <%= first_page_tag unless current_page.first? %>
-      <%= prev_page_tag unless current_page.first? %>
-      <% each_page do |page| -%>
-          <% if page.left_outer? || page.right_outer? || page.inside_window? -%>
-            <%= page_tag page %>
-        <% elsif !page.was_truncated? -%>
-            <%= gap_tag %>
-        <% end -%>
-      <% end -%>
-      <%= next_page_tag unless current_page.last? %>
-      <%= last_page_tag unless current_page.last? %>
-    </ul>
-  </div>
+    <div class="<%= smart_listing_config.classes(:pagination_wrapper) %>" id='smart_listing_paginator'>
+      <div class="row">
+        <div class="vertical-align">
+          <div class="col-md-12 col-md-offset-2">
+            <ul class="<%= smart_listing_config.classes(:pagination_container) %>">
+              <%= first_page_tag unless current_page.first? %>
+              <%= prev_page_tag unless current_page.first? %>
+              <% each_page do |page| -%>
+                  <% if page.left_outer? || page.right_outer? || page.inside_window? -%>
+                      <%= page_tag page %>
+                  <% elsif !page.was_truncated? -%>
+                      <%= gap_tag %>
+                  <% end -%>
+              <% end -%>
+
+              <%= next_page_tag unless current_page.last? %>
+              <%= last_page_tag unless current_page.last? %>
+            </ul>
+          </div>
+          <% if total_pages > 1 %>
+              <div class="col-md-2">
+                <div class="input-group pull-right">
+                  <input type="number" min="1" max="<%= total_pages %>" class="form-control" placeholder="Page" id="goToPageInput">
+                  <span class="input-group-btn">
+                    <a class="btn btn-primary" id="goToPageButton" data-remote="<%=remote%>" type="button">
+                      <i class="fa fa-search" aria-hidden="true"></i>
+                    </a>
+                  </span>
+                </div>
+              </div>
+          <% end %>
+        </div>
+      </div>
+    </div>
 <% end -%>
